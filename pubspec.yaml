@@ -1,0 +1,14 @@
+name: crypto_tds_ledger_india
+description: TDS App
+publish_to: "none"
+
+environment:
+  sdk: ">=2.17.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  intl: ^0.18.0
+
+flutter:
+  uses-material-design: true
