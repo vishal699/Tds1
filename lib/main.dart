@@ -1,109 +1,175 @@
+// FULL FINAL SUPER APP (shortened but complete logic)
+
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:csv/csv.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(MyApp());
-}
-
-class Txn {
-  String name, pan, date;
-  double amount, tds, net;
-
-  Txn(this.name, this.pan, this.amount)
-      : tds = amount * 0.01,
-        net = amount - (amount * 0.01),
-        date = DateFormat('dd-MM-yyyy').format(DateTime.now());
 }
 
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Crypto TDS Ledger India',
-      home: Home(),
-    );
+    return MaterialApp(home: LoginPage());
   }
 }
 
-class Home extends StatefulWidget {
+// 🔐 LOGIN PAGE
+class LoginPage extends StatefulWidget {
   @override
-  _HomeState createState() => _HomeState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _HomeState extends State<Home> {
-  List<Txn> list = [];
+class _LoginPageState extends State<LoginPage> {
+  final email = TextEditingController();
+  final pass = TextEditingController();
 
-  final name = TextEditingController();
-  final pan = TextEditingController();
-  final amt = TextEditingController();
-
-  void add() {
-    if (name.text.isEmpty || pan.text.isEmpty || amt.text.isEmpty) return;
-
-    setState(() {
-      list.add(Txn(name.text, pan.text, double.parse(amt.text)));
-    });
-
-    name.clear();
-    pan.clear();
-    amt.clear();
-  }
-
-  double totalTds() {
-    return list.fold(0, (s, e) => s + e.tds);
+  void login() async {
+    await FirebaseAuth.instance.signInAnonymously();
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => Home()));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Crypto TDS Ledger India')),
-      body: Padding(
-        padding: EdgeInsets.all(10),
-        child: Column(
-          children: [
-            TextField(controller: name, decoration: InputDecoration(labelText: "Name")),
-            TextField(controller: pan, decoration: InputDecoration(labelText: "PAN")),
-            TextField(controller: amt, decoration: InputDecoration(labelText: "Amount"), keyboardType: TextInputType.number),
+      body: Center(
+        child: ElevatedButton(
+          onPressed: login,
+          child: Text("ENTER APP"),
+        ),
+      ),
+    );
+  }
+}
 
-            SizedBox(height: 10),
-            ElevatedButton(onPressed: add, child: Text("ADD")),
+// 🏠 HOME
+class Home extends StatefulWidget {
+  @override
+  State<Home> createState() => _HomeState();
+}
 
-            SizedBox(height: 10),
-            Text("Monthly TDS: ₹${totalTds().toStringAsFixed(2)}"),
+class _HomeState extends State<Home> {
+  final name = TextEditingController();
+  final pan = TextEditingController();
+  final amt = TextEditingController();
 
-            Expanded(
-              child: ListView.builder(
-                itemCount: list.length,
-                itemBuilder: (c, i) {
-                  var t = list[i];
-                  return Card(
-                    child: ListTile(
-                      title: Text("${t.name} ₹${t.amount}"),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("PAN: ${t.pan}"),
-                          Text("TDS: ₹${t.tds} | Net: ₹${t.net}"),
-                          Text("Date: ${t.date}"),
-                          Text(
-                            "1% TDS u/s 194S. Claim in ITR. Deposited monthly.",
-                            style: TextStyle(fontSize: 11),
-                          ),
-                        ],
-                      ),
-                      trailing: IconButton(
-                        icon: Icon(Icons.delete),
-                        onPressed: () {
-                          setState(() => list.removeAt(i));
-                        },
+  void add() async {
+    double a = double.parse(amt.text);
+    double t = a * 0.01;
+
+    await FirebaseFirestore.instance.collection("txns").add({
+      "name": name.text,
+      "pan": pan.text,
+      "amount": a,
+      "tds": t,
+      "net": a - t,
+      "date": DateFormat('dd-MM-yyyy').format(DateTime.now()),
+    });
+  }
+
+  // 📊 EXPORT CSV
+  void exportCSV(List docs) async {
+    List<List<dynamic>> rows = [
+      ["Name", "PAN", "Amount", "TDS", "Net"]
+    ];
+
+    for (var d in docs) {
+      rows.add([
+        d['name'],
+        d['pan'],
+        d['amount'],
+        d['tds'],
+        d['net']
+      ]);
+    }
+
+    String csv = const ListToCsvConverter().convert(rows);
+
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File("${dir.path}/tds.csv");
+    await file.writeAsString(csv);
+
+    Share.shareXFiles([XFile(file.path)]);
+  }
+
+  // 📄 PDF
+  void generatePDF(Map t) async {
+    final pdf = pw.Document();
+
+    pdf.addPage(
+      pw.Page(
+        build: (_) => pw.Text(
+            "Name: ${t['name']}\nAmount: ${t['amount']}\nTDS: ${t['tds']}"),
+      ),
+    );
+
+    await Printing.sharePdf(bytes: await pdf.save(), filename: 'tds.pdf');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text("TDS PRO MAX")),
+      body: Column(
+        children: [
+          TextField(controller: name),
+          TextField(controller: pan),
+          TextField(controller: amt),
+          ElevatedButton(onPressed: add, child: Text("SAVE")),
+
+          Expanded(
+            child: StreamBuilder(
+              stream: FirebaseFirestore.instance.collection("txns").snapshots(),
+              builder: (c, s) {
+                if (!s.hasData) return CircularProgressIndicator();
+
+                var docs = s.data!.docs;
+
+                return Column(
+                  children: [
+                    ElevatedButton(
+                      onPressed: () => exportCSV(docs.map((e)=>e.data()).toList()),
+                      child: Text("EXPORT EXCEL"),
+                    ),
+
+                    Expanded(
+                      child: ListView(
+                        children: docs.map((e) {
+                          var t = e.data();
+                          return ListTile(
+                            title: Text("${t['name']} ₹${t['amount']}"),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                    icon: Icon(Icons.picture_as_pdf),
+                                    onPressed: () => generatePDF(t)),
+                                IconButton(
+                                    icon: Icon(Icons.share),
+                                    onPressed: () => Share.share(t.toString())),
+                              ],
+                            ),
+                          );
+                        }).toList(),
                       ),
                     ),
-                  );
-                },
-              ),
-            )
-          ],
-        ),
+                  ],
+                );
+              },
+            ),
+          )
+        ],
       ),
     );
   }
